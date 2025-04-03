@@ -1,76 +1,67 @@
 import streamlit as st
-import mysql.connector
+from sqlalchemy import create_engine, text
 import pandas as pd
 import os
 
 # Streamlit App Title
-st.title("📊 MySQL Database Management with Streamlit")
+st.title("📊 MySQL Database Management with Streamlit & SQLAlchemy")
 
-# MySQL Connection Function
-def get_connection():
-    try:
-        conn = mysql.connector.connect(
-            host=os.getenv("MYSQL_HOST", "localhost"),  # Change if hosted elsewhere
-            user=os.getenv("MYSQL_USER", "root"),       # Your MySQL username
-            password=os.getenv("MYSQL_PASS", "Soham@456"),    # Your MySQL password
-            database=os.getenv("MYSQL_DB", "soham"),    # Your database name
-            port=3306  # Ensure MySQL is running on this port
-        )
-        return conn
-    except mysql.connector.Error as err:
-        st.error(f"❌ Database Connection Failed: {err}")
-        return None
+# Database Configuration
+DB_USER = os.getenv("MYSQL_USER", "root")  # Change if needed
+DB_PASS = os.getenv("MYSQL_PASS", "Soham@456")   # Change to your MySQL password
+DB_HOST = os.getenv("MYSQL_HOST", "localhost")  # MySQL server address
+DB_NAME = os.getenv("MYSQL_DB", "soham")   # Change to your database name
+
+# Create SQLAlchemy Engine
+engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}")
 
 # Fetch Table Names
 def get_table_names():
-    conn = get_connection()
-    if conn:
-        cursor = conn.cursor()
-        cursor.execute("SHOW TABLES;")
-        tables = [row[0] for row in cursor.fetchall()]
-        conn.close()
-        return tables
-    return []
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SHOW TABLES;"))
+            return [row[0] for row in result]
+    except Exception as e:
+        st.error(f"❌ Error fetching tables: {e}")
+        return []
 
 # Fetch Data from a Table
 def fetch_data(table):
-    conn = get_connection()
-    if conn:
-        query = f"SELECT * FROM {table}"
-        df = pd.read_sql(query, conn)
-        conn.close()
+    try:
+        with engine.connect() as conn:
+            query = f"SELECT * FROM {table}"
+            df = pd.read_sql(query, conn)
         return df
-    return None
+    except Exception as e:
+        st.error(f"❌ Error fetching data: {e}")
+        return None
 
 # Insert Data into Table
 def insert_data(table, data):
-    conn = get_connection()
-    if conn:
-        cursor = conn.cursor()
-        columns = ", ".join(data.keys())
-        values = tuple(data.values())
-        placeholders = ", ".join(["%s"] * len(values))
-        
-        query = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"
-        cursor.execute(query, values)
-        conn.commit()
-        conn.close()
+    try:
+        with engine.connect() as conn:
+            query = text(f"INSERT INTO {table} ({', '.join(data.keys())}) VALUES ({', '.join([':' + key for key in data.keys()])})")
+            conn.execute(query, data)
+            conn.commit()
         st.success(f"✅ Data inserted into {table} successfully!")
+    except Exception as e:
+        st.error(f"❌ Error inserting data: {e}")
 
 # Delete Data from Table
 def delete_data(table, column, value):
-    conn = get_connection()
-    if conn:
-        cursor = conn.cursor()
-        query = f"DELETE FROM {table} WHERE {column} = %s"
-        cursor.execute(query, (value,))
-        conn.commit()
-        conn.close()
+    try:
+        with engine.connect() as conn:
+            query = text(f"DELETE FROM {table} WHERE {column} = :value")
+            conn.execute(query, {"value": value})
+            conn.commit()
         st.success(f"🗑️ Deleted record from {table} where {column} = {value}")
+    except Exception as e:
+        st.error(f"❌ Error deleting data: {e}")
 
 # Streamlit UI
 st.subheader("🔹 Available Tables")
 tables = get_table_names()
+
 if tables:
     st.write("✅ Available Tables:", tables)
     selected_table = st.selectbox("🔹 Select Table", tables)
@@ -99,4 +90,3 @@ if tables:
 
 else:
     st.warning("⚠️ No tables found in the database.")
-
