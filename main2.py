@@ -1,92 +1,134 @@
 import streamlit as st
-from sqlalchemy import create_engine, text
+import pymysql
 import pandas as pd
-import os
-
-# Streamlit App Title
-st.title("📊 MySQL Database Management with Streamlit & SQLAlchemy")
 
 # Database Configuration
-DB_USER = os.getenv("MYSQL_USER", "root")  # Change if needed
-DB_PASS = os.getenv("MYSQL_PASS", "Soham@456")   # Change to your MySQL password
-DB_HOST = os.getenv("MYSQL_HOST", "localhost")  # MySQL server address
-DB_NAME = os.getenv("MYSQL_DB", "soham")   # Change to your database name
+DB_CONFIG = {
+    "host": "localhost",
+    "user": "root",
+    "password": "xyz",  # Change this to your MySQL password
+    "database": "soham"
+}
 
-# Create SQLAlchemy Engine
-engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}")
+# Establish MySQL Connection
+def get_connection():
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        return conn
+    except pymysql.MySQLError as e:
+        st.error(f"❌ Database Connection Failed: {e}")
+        return None
 
 # Fetch Table Names
 def get_table_names():
-    try:
-        with engine.connect() as conn:
-            result = conn.execute(text("SHOW TABLES;"))
-            return [row[0] for row in result]
-    except Exception as e:
-        st.error(f"❌ Error fetching tables: {e}")
-        return []
+    conn = get_connection()
+    if conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SHOW TABLES;")
+            tables = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return tables
+    return []
 
-# Fetch Data from a Table
-def fetch_data(table):
-    try:
-        with engine.connect() as conn:
-            query = f"SELECT * FROM {table}"
-            df = pd.read_sql(query, conn)
+# Fetch Student Names
+def get_student_names(table):
+    conn = get_connection()
+    if conn:
+        with conn.cursor() as cursor:
+            cursor.execute(f"SELECT Name FROM {table}")
+            rows = cursor.fetchall()
+        conn.close()
+        return [row[0] for row in rows] if rows else []
+    return []
+
+# Insert or Update Student Data
+def insert_data(table):
+    names = get_student_names(table)
+    if not names:
+        st.error("⚠️ No student names found! Add names first.")
+        return
+
+    selected_name = st.selectbox("Select Student", names)
+
+    # Fetch column names excluding primary keys and 'Total'
+    conn = get_connection()
+    if conn:
+        with conn.cursor() as cursor:
+            cursor.execute(f"SHOW COLUMNS FROM {table}")
+            columns = [col[0] for col in cursor.fetchall() if col[0] not in ["RollNo", "Name", "Total"]]
+
+    data = {"Name": selected_name}
+    for col in columns:
+        data[col] = st.number_input(f"Enter {col} for {selected_name}", min_value=0, step=1, key=col)
+
+    if st.button("Submit Data"):
+        conn = get_connection()
+        if conn:
+            with conn.cursor() as cursor:
+                query = f"UPDATE {table} SET {', '.join([f'{col} = %s' for col in columns])} WHERE Name = %s"
+                cursor.execute(query, tuple(data[col] for col in columns) + (selected_name,))
+                conn.commit()
+            conn.close()
+            st.success(f"✅ Data updated for {selected_name} in {table}")
+
+# View Table Data
+def view_data(table):
+    conn = get_connection()
+    if conn:
+        df = pd.read_sql(f"SELECT * FROM {table}", conn)
+        conn.close()
         return df
-    except Exception as e:
-        st.error(f"❌ Error fetching data: {e}")
-        return None
+    return pd.DataFrame()
 
-# Insert Data into Table
-def insert_data(table, data):
-    try:
-        with engine.connect() as conn:
-            query = text(f"INSERT INTO {table} ({', '.join(data.keys())}) VALUES ({', '.join([':' + key for key in data.keys()])})")
-            conn.execute(query, data)
-            conn.commit()
-        st.success(f"✅ Data inserted into {table} successfully!")
-    except Exception as e:
-        st.error(f"❌ Error inserting data: {e}")
+# Delete Student Data
+def delete_data(table):
+    names = get_student_names(table)
+    if not names:
+        st.error("⚠️ No student names found! Add names first.")
+        return
 
-# Delete Data from Table
-def delete_data(table, column, value):
-    try:
-        with engine.connect() as conn:
-            query = text(f"DELETE FROM {table} WHERE {column} = :value")
-            conn.execute(query, {"value": value})
-            conn.commit()
-        st.success(f"🗑️ Deleted record from {table} where {column} = {value}")
-    except Exception as e:
-        st.error(f"❌ Error deleting data: {e}")
+    selected_name = st.selectbox("🗑️ Select Student to Delete", names, key="delete_name")
+
+    if st.button("❌ Delete Record"):
+        conn = get_connection()
+        if conn:
+            with conn.cursor() as cursor:
+                cursor.execute(f"DELETE FROM {table} WHERE Name = %s", (selected_name,))
+                conn.commit()
+            conn.close()
+            st.success(f"🗑️ Deleted {selected_name} from {table}!")
+
+# Export Data to Excel
+def export_all_to_excel():
+    with pd.ExcelWriter("All_Data.xlsx") as writer:
+        for table in get_table_names():
+            df = view_data(table)
+            if not df.empty:
+                df.to_excel(writer, sheet_name=table, index=False)
+
+    with open("All_Data.xlsx", "rb") as f:
+        st.download_button(label="📥 Download All Data", data=f, file_name="All_Data.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # Streamlit UI
-st.subheader("🔹 Available Tables")
-tables = get_table_names()
+st.title("📊 Student Data Management System")
 
+tables = get_table_names()
 if tables:
     st.write("✅ Available Tables:", tables)
-    selected_table = st.selectbox("🔹 Select Table", tables)
+    table = st.selectbox("🔹 Select Table", tables)
 
-    if selected_table:
-        st.subheader(f"📌 View Data in {selected_table}")
-        df = fetch_data(selected_table)
-        if df is not None:
-            st.dataframe(df)
+    if table:
+        st.subheader(f"📌 Add or Update Data in {table}")
+        insert_data(table)
 
-        st.subheader(f"📌 Insert Data into {selected_table}")
-        col1, col2 = st.columns(2)
-        with col1:
-            name = st.text_input("Enter Name")
-        with col2:
-            score = st.number_input("Enter Score", min_value=0, step=1)
+        st.subheader(f"📌 View {table} Data")
+        st.dataframe(view_data(table))
 
-        if st.button("Submit Data"):
-            insert_data(selected_table, {"Name": name, "Score": score})
+        st.subheader(f"🗑️ Delete Student Data from {table}")
+        delete_data(table)
 
-        st.subheader(f"🗑️ Delete Data from {selected_table}")
-        if not df.empty:
-            delete_name = st.selectbox("Select Name to Delete", df["Name"])
-            if st.button("❌ Delete Record"):
-                delete_data(selected_table, "Name", delete_name)
-
+        st.subheader("📥 Download All Data")
+        export_all_to_excel()
 else:
     st.warning("⚠️ No tables found in the database.")
+
