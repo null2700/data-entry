@@ -6,7 +6,7 @@ import pandas as pd
 DB_CONFIG = {
     "host": "localhost",
     "user": "root",
-    "password": "xyz",  # Change this to your MySQL password
+    "password": "Soham@456",  # Change this to your MySQL password
     "database": "soham"
 }
 
